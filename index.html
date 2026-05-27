@@ -308,7 +308,73 @@
   #auto-ring.show { opacity: 1; }
   #auto-ring svg { animation: spin 2s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── QR SCAN BUTTON ── */
+  .qr-btn {
+    padding: 10px 14px;
+    background: rgba(0,255,136,0.05);
+    border: 1px solid rgba(0,255,136,0.3);
+    border-radius: 2px;
+    color: var(--green);
+    font-family: 'Courier New', monospace;
+    font-size: 10px; letter-spacing: 1px;
+    cursor: pointer; -webkit-appearance: none;
+    white-space: nowrap; flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .qr-btn:active { background: var(--green-bg); }
+
+  .key-saved-badge {
+    font-size: 8px; letter-spacing: 1px;
+    color: var(--green); opacity: 0.55;
+  }
+
+  /* ── QR MODAL ── */
+  #qr-modal {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.97);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px; padding: 32px 24px;
+  }
+  #qr-modal.hidden { display: none; }
+
+  .qr-label {
+    font-size: 9px; letter-spacing: 2px;
+    color: var(--text-dim); text-align: center; line-height: 2.2;
+  }
+
+  .qr-viewfinder {
+    position: relative;
+    width: 260px; height: 260px;
+    overflow: hidden;
+    background: #000;
+  }
+  #qr-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .qr-corner {
+    position: absolute; width: 22px; height: 22px;
+    border-color: var(--green); border-style: solid;
+  }
+  .qr-corner.tl { top: 8px; left: 8px;  border-width: 2px 0 0 2px; }
+  .qr-corner.tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
+  .qr-corner.bl { bottom: 8px; left: 8px;  border-width: 0 0 2px 2px; }
+  .qr-corner.br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+  .qr-scanline {
+    position: absolute; left: 12px; right: 12px; height: 1px;
+    background: var(--green); opacity: 0.65;
+    animation: qrscan 2s ease-in-out infinite;
+  }
+  @keyframes qrscan { 0%,100% { top: 12%; } 50% { top: 84%; } }
+
+  #qr-status {
+    font-size: 9px; letter-spacing: 2px;
+    color: var(--text-dim); text-align: center; min-height: 18px;
+  }
+  #qr-status.found { color: var(--green); }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
 <body>
 
@@ -326,10 +392,14 @@
     麻将 · 棋局 · 翻译 · 乐高
   </p>
   <div class="api-section">
-    <div class="api-label">ANTHROPIC API KEY</div>
-    <input id="api-input" class="api-input" type="password"
-      placeholder="sk-ant-... （留空使用演示模式）"
-      autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="api-label">ANTHROPIC API KEY <span id="key-badge" class="key-saved-badge"></span></div>
+    <div style="display:flex;gap:6px;align-items:stretch">
+      <input id="api-input" class="api-input" type="password"
+        placeholder="sk-ant-... （留空使用演示模式）"
+        autocomplete="off" autocorrect="off" spellcheck="false"
+        style="flex:1;min-width:0">
+      <button class="qr-btn" id="btn-qr">扫码</button>
+    </div>
   </div>
   <button class="start-btn" id="btn-start">[ 启动 AR 系统 ]</button>
   <p class="splash-note">
@@ -337,6 +407,22 @@
     建议使用后置/外置摄像头<br>
     HTTPS 环境下运行效果最佳
   </p>
+</div>
+
+<!-- ── QR SCANNER MODAL ── -->
+<div id="qr-modal" class="hidden">
+  <div class="qr-label">将含 API Key 的二维码对准框内<br>自动识别后填入</div>
+  <div class="qr-viewfinder">
+    <video id="qr-video" autoplay playsinline muted></video>
+    <canvas id="qr-canvas" style="display:none"></canvas>
+    <div class="qr-corner tl"></div>
+    <div class="qr-corner tr"></div>
+    <div class="qr-corner bl"></div>
+    <div class="qr-corner br"></div>
+    <div class="qr-scanline"></div>
+  </div>
+  <div id="qr-status">扫描中...</div>
+  <button class="start-btn" id="btn-qr-cancel" style="max-width:260px;padding:11px;font-size:10px;letter-spacing:2px">[ 取消 ]</button>
 </div>
 
 <!-- ── MAIN ── -->
@@ -509,8 +595,23 @@ const autoRing = $('auto-ring');
 // ─────────────────────────────────────────
 // SPLASH → START
 // ─────────────────────────────────────────
+// Auto-fill API key from localStorage
+{
+  const saved = localStorage.getItem('ar_api_key');
+  if (saved) {
+    $('api-input').value = saved;
+    $('key-badge').textContent = '· 已保存';
+  }
+}
+
 $('btn-start').addEventListener('click', async () => {
   apiKey = $('api-input').value.trim();
+  if (apiKey) {
+    localStorage.setItem('ar_api_key', apiKey);
+    $('key-badge').textContent = '· 已保存';
+  } else {
+    localStorage.removeItem('ar_api_key');
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -836,6 +937,72 @@ $('btn-clear').addEventListener('click', () => {
   arOverlays = [];
   ctx.clearRect(0, 0, arCanvas.width, arCanvas.height);
 });
+
+// ─────────────────────────────────────────
+// QR SCANNER
+// ─────────────────────────────────────────
+let qrStream = null;
+let qrRafId = null;
+
+$('btn-qr').addEventListener('click', async () => {
+  $('qr-modal').classList.remove('hidden');
+  const statusEl = $('qr-status');
+  statusEl.textContent = '启动摄像头...';
+  statusEl.className = '';
+  try {
+    qrStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    const qv = $('qr-video');
+    qv.srcObject = qrStream;
+    qv.onloadedmetadata = () => {
+      statusEl.textContent = '扫描中...';
+      scanQRFrame();
+    };
+  } catch (e) {
+    $('qr-status').textContent = '摄像头启动失败：' + e.message;
+  }
+});
+
+function scanQRFrame() {
+  if (!qrStream) return;
+  const qv = $('qr-video');
+  const qc = $('qr-canvas');
+  const W = qv.videoWidth, H = qv.videoHeight;
+  if (W && H) {
+    qc.width = W; qc.height = H;
+    const qCtx = qc.getContext('2d');
+    qCtx.drawImage(qv, 0, 0, W, H);
+    const imgData = qCtx.getImageData(0, 0, W, H);
+    const code = jsQR(imgData.data, W, H, { inversionAttempts: 'dontInvert' });
+    if (code && code.data.trim()) {
+      const key = code.data.trim();
+      stopQRStream();
+      $('api-input').value = key;
+      localStorage.setItem('ar_api_key', key);
+      $('key-badge').textContent = '· 已扫码';
+      const s = $('qr-status');
+      s.textContent = '✓ 识别成功';
+      s.className = 'found';
+      setTimeout(closeQRModal, 700);
+      return;
+    }
+  }
+  qrRafId = requestAnimationFrame(scanQRFrame);
+}
+
+function stopQRStream() {
+  if (qrRafId) { cancelAnimationFrame(qrRafId); qrRafId = null; }
+  if (qrStream) { qrStream.getTracks().forEach(t => t.stop()); qrStream = null; }
+}
+
+function closeQRModal() {
+  stopQRStream();
+  $('qr-modal').classList.add('hidden');
+}
+
+$('btn-qr-cancel').addEventListener('click', closeQRModal);
 
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
