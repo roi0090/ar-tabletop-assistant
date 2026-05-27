@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>AR TABLETOP · AI桌面外挂</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --green: #00ff88;
+    --green-dim: rgba(0,255,136,0.4);
+    --green-bg: rgba(0,255,136,0.08);
+    --green-bg2: rgba(0,255,136,0.15);
+    --amber: #ffcc00;
+    --red: #ff4444;
+    --blue: #44aaff;
+    --text: #c8ffd8;
+    --text-dim: rgba(200,255,216,0.4);
+    --overlay-dark: rgba(0,0,0,0.75);
+    --overlay-mid: rgba(0,0,0,0.5);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  /* ── SPLASH SCREEN ── */
+  #splash {
+    position: fixed; inset: 0; z-index: 100;
+    background: #000;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px;
+    padding: 32px 24px;
+  }
+  #splash.hidden { display: none; }
+
+  .splash-logo {
+    font-size: 10px; letter-spacing: 4px; color: var(--green);
+    text-align: center; line-height: 2;
+  }
+  .splash-logo .big { font-size: 18px; letter-spacing: 6px; display: block; margin-bottom: 4px; }
+  .splash-logo .sub { color: var(--text-dim); font-size: 9px; letter-spacing: 3px; }
+
+  .splash-divider {
+    width: 80px; height: 1px;
+    background: linear-gradient(to right, transparent, var(--green-dim), transparent);
+  }
+
+  .splash-desc {
+    font-size: 10px; color: var(--text-dim); letter-spacing: 1.5px;
+    text-align: center; line-height: 2.2; max-width: 280px;
+  }
+
+  .api-section { width: 100%; max-width: 300px; }
+  .api-label { font-size: 9px; letter-spacing: 2px; color: var(--text-dim); margin-bottom: 6px; }
+  .api-input {
+    width: 100%;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(0,255,136,0.25);
+    border-radius: 2px;
+    color: var(--green);
+    font-family: 'Courier New', monospace;
+    font-size: 11px; letter-spacing: 1px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .api-input:focus { border-color: var(--green); }
+  .api-input::placeholder { color: rgba(0,255,136,0.2); }
+
+  .start-btn {
+    width: 100%; max-width: 300px;
+    padding: 13px;
+    background: var(--green-bg);
+    border: 1px solid var(--green);
+    border-radius: 2px;
+    color: var(--green);
+    font-family: 'Courier New', monospace;
+    font-size: 11px; letter-spacing: 3px;
+    cursor: pointer; text-transform: uppercase;
+    transition: background 0.15s, transform 0.1s;
+    -webkit-appearance: none;
+  }
+  .start-btn:active { background: var(--green-bg2); transform: scale(0.98); }
+
+  .splash-note {
+    font-size: 9px; color: rgba(255,255,255,0.2);
+    letter-spacing: 1px; text-align: center; line-height: 1.8;
+  }
+
+  /* ── MAIN AR VIEW ── */
+  #main { position: fixed; inset: 0; display: none; }
+  #main.active { display: block; }
+
+  video#cam {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0.88;
+  }
+
+  canvas#ar {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; z-index: 10;
+  }
+
+  /* scanline effect */
+  #scanline {
+    position: absolute; inset: 0; z-index: 6; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent 0px, transparent 3px,
+      rgba(0,255,100,0.025) 3px, rgba(0,255,100,0.025) 4px
+    );
+    animation: scan 10s linear infinite;
+  }
+  @keyframes scan { to { background-position: 0 80px; } }
+
+  /* vignette */
+  #vignette {
+    position: absolute; inset: 0; z-index: 7; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.5) 100%);
+  }
+
+  /* ── HUD TOP ── */
+  #hud-top {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 30;
+    padding: env(safe-area-inset-top, 12px) 16px 12px;
+    padding-top: max(env(safe-area-inset-top), 12px);
+    background: linear-gradient(to bottom, rgba(0,0,0,0.65) 0%, transparent 100%);
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+
+  .logo { line-height: 1.5; }
+  .logo-main { font-size: 12px; letter-spacing: 4px; color: var(--green); }
+  .logo-sub { font-size: 8px; letter-spacing: 2px; color: var(--text-dim); }
+
+  .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+  .pill {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 8px; letter-spacing: 1.5px; padding: 3px 8px;
+    border: 1px solid; border-radius: 2px;
+  }
+  .pill-green { color: var(--green); border-color: var(--green-dim); }
+  .pill-amber { color: var(--amber); border-color: rgba(255,204,0,0.4); }
+  .pill-dim { color: var(--text-dim); border-color: rgba(255,255,255,0.1); }
+
+  .dot {
+    width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+    animation: blink 1.4s ease infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.15} }
+
+  #fps { font-size: 8px; color: rgba(0,255,136,0.3); letter-spacing: 1px; margin-top: 2px; text-align: right; }
+
+  /* ── CALIBRATION ── */
+  #calib-overlay {
+    position: absolute; inset: 0; z-index: 20; pointer-events: none;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #calib-overlay.show { opacity: 1; }
+
+  .calib-box {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -58%);
+    width: 72%; height: 42%;
+    border: 1px dashed rgba(0,255,136,0.4);
+  }
+  .cc { position: absolute; width: 18px; height: 18px; border-color: var(--green); border-style: solid; }
+  .cc.tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+  .cc.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+  .cc.bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+  .cc.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+  .calib-hint {
+    position: absolute; bottom: -26px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px; letter-spacing: 2px;
+    color: rgba(0,255,136,0.55); white-space: nowrap;
+  }
+  .calib-center {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 20px; height: 20px;
+  }
+  .calib-center::before, .calib-center::after {
+    content: ''; position: absolute; background: rgba(0,255,136,0.5);
+  }
+  .calib-center::before { width: 1px; height: 100%; left: 50%; top: 0; }
+  .calib-center::after { height: 1px; width: 100%; top: 50%; left: 0; }
+
+  /* ── AI RESPONSE PANEL ── */
+  #ai-panel {
+    position: absolute; left: 12px; right: 12px;
+    bottom: 108px; z-index: 40;
+    max-height: 42vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 6px;
+    scrollbar-width: thin; scrollbar-color: var(--green-dim) transparent;
+  }
+  #ai-panel::-webkit-scrollbar { width: 2px; }
+  #ai-panel::-webkit-scrollbar-thumb { background: var(--green-dim); }
+
+  .bubble {
+    padding: 10px 12px;
+    border-left: 2px solid var(--green);
+    background: var(--overlay-dark);
+    font-size: 11px; line-height: 1.7;
+    color: var(--text);
+    animation: slideUp 0.2s ease;
+    backdrop-filter: blur(4px);
+  }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .bubble.thinking { border-left-color: var(--amber); }
+  .bubble.error { border-left-color: var(--red); }
+  .bubble.system { border-left-color: var(--text-dim); }
+
+  .bubble-head {
+    font-size: 8px; letter-spacing: 1.5px;
+    color: var(--green); margin-bottom: 6px;
+    display: flex; justify-content: space-between;
+  }
+  .bubble.thinking .bubble-head { color: var(--amber); }
+  .bubble.error .bubble-head { color: var(--red); }
+  .bubble.system .bubble-head { color: var(--text-dim); }
+
+  .thinking-anim span { animation: blink 0.7s ease infinite; display: inline-block; }
+  .thinking-anim span:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-anim span:nth-child(3) { animation-delay: 0.4s; }
+
+  /* ── HUD BOTTOM ── */
+  #hud-bottom {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 30;
+    padding: 10px 14px;
+    padding-bottom: max(env(safe-area-inset-bottom), 14px);
+    background: linear-gradient(to top, rgba(0,0,0,0.72) 0%, transparent 100%);
+  }
+
+  .mode-row {
+    display: flex; gap: 5px; margin-bottom: 8px;
+    overflow-x: auto; scrollbar-width: none; padding-bottom: 2px;
+  }
+  .mode-row::-webkit-scrollbar { display: none; }
+
+  .mode-btn {
+    flex-shrink: 0;
+    font-family: 'Courier New', monospace;
+    font-size: 9px; letter-spacing: 1.5px;
+    padding: 5px 11px;
+    border: 1px solid rgba(0,255,136,0.2);
+    background: rgba(0,0,0,0.4);
+    color: rgba(0,255,136,0.4);
+    border-radius: 2px; cursor: pointer;
+    transition: all 0.15s; -webkit-appearance: none;
+    white-space: nowrap;
+  }
+  .mode-btn.active {
+    border-color: var(--green); color: var(--green);
+    background: var(--green-bg);
+  }
+  .mode-btn:active { transform: scale(0.95); }
+
+  .btn-row { display: flex; gap: 7px; }
+
+  .btn-main {
+    flex: 1; padding: 11px 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 10px; letter-spacing: 2px;
+    background: var(--green-bg);
+    border: 1px solid var(--green);
+    border-radius: 2px; color: var(--green);
+    cursor: pointer; transition: all 0.15s;
+    -webkit-appearance: none;
+  }
+  .btn-main:active { background: var(--green-bg2); transform: scale(0.98); }
+  .btn-main:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+
+  .btn-sec {
+    padding: 11px 13px;
+    font-family: 'Courier New', monospace;
+    font-size: 9px; letter-spacing: 1px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 2px; color: rgba(255,255,255,0.35);
+    cursor: pointer; transition: all 0.15s;
+    -webkit-appearance: none; white-space: nowrap;
+  }
+  .btn-sec:active { border-color: rgba(255,255,255,0.4); color: rgba(255,255,255,0.6); }
+
+  /* ── AUTO CAPTURE INDICATOR ── */
+  #auto-ring {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 60px; height: 60px; z-index: 15; pointer-events: none;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #auto-ring.show { opacity: 1; }
+  #auto-ring svg { animation: spin 2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ── SPLASH ── -->
+<div id="splash">
+  <div class="splash-logo">
+    <span class="big">◈ AR TABLETOP</span>
+    AI桌面外挂助手
+    <span class="sub">META DISPLAY GLASS · WEBAPP v1.0</span>
+  </div>
+  <div class="splash-divider"></div>
+  <p class="splash-desc">
+    手机作为计算中枢<br>
+    眼镜端实时AR叠加输出<br>
+    麻将 · 棋局 · 翻译 · 乐高
+  </p>
+  <div class="api-section">
+    <div class="api-label">ANTHROPIC API KEY</div>
+    <input id="api-input" class="api-input" type="password"
+      placeholder="sk-ant-... （留空使用演示模式）"
+      autocomplete="off" autocorrect="off" spellcheck="false">
+  </div>
+  <button class="start-btn" id="btn-start">[ 启动 AR 系统 ]</button>
+  <p class="splash-note">
+    首次使用需授权摄像头权限<br>
+    建议使用后置/外置摄像头<br>
+    HTTPS 环境下运行效果最佳
+  </p>
+</div>
+
+<!-- ── MAIN ── -->
+<div id="main">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="ar"></canvas>
+  <div id="scanline"></div>
+  <div id="vignette"></div>
+
+  <div id="hud-top">
+    <div class="logo">
+      <div class="logo-main">◈ AR TABLETOP</div>
+      <div class="logo-sub" id="mode-label">MAHJONG MODE</div>
+    </div>
+    <div class="hud-right">
+      <div class="pill pill-green" id="pill-cam"><div class="dot"></div>CAM LIVE</div>
+      <div class="pill pill-dim" id="pill-ai">AI ENGINE</div>
+      <div id="fps">0 FPS · 0 frames</div>
+    </div>
+  </div>
+
+  <div id="calib-overlay">
+    <div class="calib-box">
+      <div class="cc tl"></div><div class="cc tr"></div>
+      <div class="cc bl"></div><div class="cc br"></div>
+      <div class="calib-center"></div>
+      <div class="calib-hint">[ 将桌面对准此区域 ]</div>
+    </div>
+  </div>
+
+  <div id="auto-ring">
+    <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+      <circle cx="30" cy="30" r="26" stroke="rgba(0,255,136,0.2)" stroke-width="1.5"/>
+      <path d="M30 4 A26 26 0 0 1 56 30" stroke="#00ff88" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <div id="ai-panel"></div>
+
+  <div id="hud-bottom">
+    <div class="mode-row" id="mode-row">
+      <button class="mode-btn active" data-mode="mahjong">🀄 麻将</button>
+      <button class="mode-btn" data-mode="chess">♟ 棋局</button>
+      <button class="mode-btn" data-mode="translate">🔤 翻译</button>
+      <button class="mode-btn" data-mode="lego">🧱 乐高</button>
+      <button class="mode-btn" data-mode="cards">🃏 扑克</button>
+      <button class="mode-btn" data-mode="free">👁 自由</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn-main" id="btn-capture" disabled>[ 分析画面 ]</button>
+      <button class="btn-sec" id="btn-auto">AUTO</button>
+      <button class="btn-sec" id="btn-calib">校准</button>
+      <button class="btn-sec" id="btn-clear">清除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────
+const MODES = {
+  mahjong: {
+    label: 'MAHJONG MODE',
+    prompt: `你是一个专业的麻将AI助手。请分析这张麻将牌局图片：
+1. 识别所有可见的手牌（用麻将符号描述）
+2. 分析当前手牌的听牌/进牌状况
+3. 给出具体的出牌建议
+格式：
+【手牌识别】xxx
+【建议打出】xxx
+【理由】xxx（30字以内）
+如果画面中没有麻将牌，请描述你看到的物体。`
+  },
+  chess: {
+    label: 'CHESS / SHOGI MODE',
+    prompt: `分析画面中的棋盘局面（围棋/日本将棋/中国象棋均可）：
+【棋种】xxx
+【当前局势】xxx（30字）
+【推荐落点】位置坐标或描述
+【理由】xxx（20字）
+如果不是棋局，描述画面内容。`
+  },
+  translate: {
+    label: 'TRANSLATE MODE',
+    prompt: `请翻译画面中所有可见的文字（优先处理日文/英文）：
+每行格式：【原文】→【中文】
+若有多处文字请逐一列出。
+如果没有文字，描述画面中的物品。`
+  },
+  lego: {
+    label: 'LEGO / PUZZLE MODE',
+    prompt: `分析画面中的乐高积木或拼图状态：
+【当前进度】完成度估计
+【下一步零件】颜色+形状描述
+【安装位置】相对位置描述
+如果不是乐高/拼图，描述你看到的内容。`
+  },
+  cards: {
+    label: 'POKER / CARDS MODE',
+    prompt: `分析画面中的扑克牌局：
+【识别手牌】点数+花色列举
+【牌型判断】当前最强组合
+【建议操作】保留/弃牌/加注
+如果不是扑克，描述画面内容。`
+  },
+  free: {
+    label: 'FREE ANALYSIS MODE',
+    prompt: `详细描述这张图片的内容：
+- 主体物品及其状态
+- 空间布局
+- 值得注意的细节
+用中文回答，简洁直接，不超过80字。`
+  }
+};
+
+const DEMO_RESPONSES = {
+  mahjong: `【手牌识别】一万×2 二万×1 三饼×2 发财×1 七条×2 八条×1 九条×1 东风×1
+【建议打出】发财（单张字牌）
+【理由】七八九条顺子雏形已成，打发财后听牌概率+34%`,
+  chess: `【棋种】围棋（黑先）
+【当前局势】黑方右翼薄弱，中腹争夺激烈，白方约+12目
+【推荐落点】右下角 Q3（天王星点）
+【理由】威胁征子同时补强眼位`,
+  translate: `【今日のおすすめ】→【今日推荐】
+【旬の食材を使ったランチ】→【使用时令食材的午餐套餐】
+【¥1,500（税込）】→【1500日元（含税）】`,
+  lego: `【当前进度】第14/32步，侧翼结构搭建中
+【下一步零件】1×4 红色平板（编号3010）
+【安装位置】底盘第3排中央，与左侧结构对齐卡紧`,
+  cards: `【识别手牌】A♠ K♠ Q♠ J♠ 10♦
+【牌型判断】皇家同花顺差一张（缺10♠）/ 当前持有A高顺子
+【建议操作】保留A K Q J，弃10♦换牌`,
+  free: `画面中可见：笔记本电脑（开机状态）、咖啡杯（半满）、约8张便利贴（散落）、蓝色圆珠笔一支、手机（屏幕朝下）。整体为工作/办公桌面环境。`
+};
+
+// ─────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────
+let apiKey = '';
+let currentMode = 'mahjong';
+let stream = null;
+let isAnalyzing = false;
+let autoMode = false;
+let autoTimer = null;
+let frameCount = 0;
+let totalFrames = 0;
+let lastFpsTs = Date.now();
+let arOverlays = [];
+let rafId = null;
+
+// ─────────────────────────────────────────
+// ELEMENTS
+// ─────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const splash = $('splash');
+const main = $('main');
+const video = $('cam');
+const arCanvas = $('ar');
+const ctx = arCanvas.getContext('2d');
+const panel = $('ai-panel');
+const btnCapture = $('btn-capture');
+const btnAuto = $('btn-auto');
+const pillAi = $('pill-ai');
+const fpsEl = $('fps');
+const modeLabel = $('mode-label');
+const calibOverlay = $('calib-overlay');
+const autoRing = $('auto-ring');
+
+// ─────────────────────────────────────────
+// SPLASH → START
+// ─────────────────────────────────────────
+$('btn-start').addEventListener('click', async () => {
+  apiKey = $('api-input').value.trim();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 }, height: { ideal: 1080 }
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    splash.classList.add('hidden');
+    main.classList.add('active');
+    btnCapture.disabled = false;
+    resizeCanvas();
+    rafId = requestAnimationFrame(tick);
+    addBubble('system', '▸ AR系统启动 · 摄像头已连接' + (apiKey ? ' · Claude Vision API已配置' : ' · 演示模式'));
+  } catch (e) {
+    addBubble('error', '摄像头授权失败：' + e.message);
+    // Still enter main view in demo mode
+    splash.classList.add('hidden');
+    main.classList.add('active');
+    btnCapture.disabled = false;
+    resizeCanvas();
+    rafId = requestAnimationFrame(tick);
+    addBubble('system', '▸ 无摄像头：演示模式运行中');
+  }
+});
+
+// ─────────────────────────────────────────
+// CANVAS
+// ─────────────────────────────────────────
+function resizeCanvas() {
+  arCanvas.width = window.innerWidth;
+  arCanvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ─────────────────────────────────────────
+// RAF LOOP
+// ─────────────────────────────────────────
+function tick() {
+  frameCount++;
+  totalFrames++;
+  const now = Date.now();
+  if (now - lastFpsTs >= 1000) {
+    fpsEl.textContent = frameCount + ' FPS · ' + totalFrames + ' frames';
+    frameCount = 0;
+    lastFpsTs = now;
+  }
+  renderAR();
+  rafId = requestAnimationFrame(tick);
+}
+
+// ─────────────────────────────────────────
+// AR CANVAS RENDER
+// ─────────────────────────────────────────
+function renderAR() {
+  ctx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+  const now = Date.now();
+  const W = arCanvas.width, H = arCanvas.height;
+  arOverlays = arOverlays.filter(o => now - o.t < 9000);
+
+  arOverlays.forEach(o => {
+    const age = now - o.t;
+    const alpha = age < 7000 ? 1 : Math.max(0, 1 - (age - 7000) / 2000);
+    ctx.globalAlpha = alpha;
+
+    const x = o.x * W, y = o.y * H;
+
+    switch (o.kind) {
+      case 'crosshair': {
+        ctx.strokeStyle = o.c || '#00ff88';
+        ctx.lineWidth = 1.5;
+        const R = 22;
+        ctx.beginPath();
+        ctx.moveTo(x - R, y); ctx.lineTo(x + R, y);
+        ctx.moveTo(x, y - R); ctx.lineTo(x, y + R);
+        ctx.stroke();
+        ctx.strokeRect(x - R * 0.7, y - R * 0.7, R * 1.4, R * 1.4);
+        // pulse ring
+        const pulse = (Math.sin(now * 0.006) + 1) / 2;
+        ctx.globalAlpha = alpha * pulse * 0.4;
+        ctx.beginPath();
+        ctx.arc(x, y, R + 8 + pulse * 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = alpha;
+        break;
+      }
+      case 'rect': {
+        ctx.strokeStyle = o.c || '#ffcc00';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 3]);
+        ctx.strokeRect(o.x * W, o.y * H, o.w * W, o.h * H);
+        ctx.setLineDash([]);
+        break;
+      }
+      case 'label': {
+        ctx.font = '11px Courier New';
+        const tw = ctx.measureText(o.text).width;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(x + 2, y - 18, tw + 16, 22);
+        ctx.strokeStyle = o.c || '#00ff88';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 2, y - 18, tw + 16, 22);
+        ctx.fillStyle = o.c || '#00ff88';
+        ctx.fillText(o.text, x + 10, y - 1);
+        break;
+      }
+      case 'arrow': {
+        drawArrow(o.x1 * W, o.y1 * H, o.x2 * W, o.y2 * H, o.c || '#ff4444');
+        break;
+      }
+      case 'scan': {
+        // horizontal scan sweep
+        const sweep = ((now - o.t) / 1500) % 1;
+        ctx.strokeStyle = 'rgba(0,255,136,0.6)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 2]);
+        const sy = o.y * H + sweep * o.h * H;
+        ctx.beginPath();
+        ctx.moveTo(o.x * W, sy);
+        ctx.lineTo((o.x + o.w) * W, sy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // keep alive while scanning
+        o.t = Math.min(o.t, now - 100);
+        break;
+      }
+    }
+    ctx.globalAlpha = 1;
+  });
+}
+
+function drawArrow(x1, y1, x2, y2, color) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const hl = 14;
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - hl * Math.cos(angle - 0.45), y2 - hl * Math.sin(angle - 0.45));
+  ctx.lineTo(x2 - hl * Math.cos(angle + 0.45), y2 - hl * Math.sin(angle + 0.45));
+  ctx.closePath(); ctx.fill();
+}
+
+// ─────────────────────────────────────────
+// CAPTURE & ANALYZE
+// ─────────────────────────────────────────
+async function analyze() {
+  if (isAnalyzing) return;
+  isAnalyzing = true;
+  btnCapture.disabled = true;
+  btnCapture.textContent = '[ 分析中... ]';
+  pillAi.className = 'pill pill-amber';
+  pillAi.innerHTML = '<div class="dot"></div>PROCESSING';
+
+  // Flash auto-ring
+  autoRing.classList.add('show');
+  setTimeout(() => autoRing.classList.remove('show'), 600);
+
+  // Grab frame
+  let imageB64 = null;
+  if (stream && video.readyState >= 2) {
+    const snap = document.createElement('canvas');
+    snap.width = video.videoWidth || 640;
+    snap.height = video.videoHeight || 480;
+    snap.getContext('2d').drawImage(video, 0, 0);
+    imageB64 = snap.toDataURL('image/jpeg', 0.82).split(',')[1];
+  }
+
+  const thinkEl = addBubble('thinking', '<span class="thinking-anim">AI分析中<span>.</span><span>.</span><span>.</span></span>');
+
+  try {
+    let reply = '';
+    if (apiKey && imageB64) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-5',
+          max_tokens: 500,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageB64 } },
+              { type: 'text', text: MODES[currentMode].prompt }
+            ]
+          }]
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message || 'HTTP ' + res.status);
+      }
+      const data = await res.json();
+      reply = data.content?.[0]?.text || '（无响应）';
+    } else {
+      // Demo mode
+      await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
+      reply = DEMO_RESPONSES[currentMode] || '画面分析完成（演示模式）。';
+    }
+
+    thinkEl.remove();
+    addBubble('ai', reply.replace(/\n/g, '<br>'));
+    injectOverlays(currentMode);
+
+  } catch (e) {
+    thinkEl.remove();
+    addBubble('error', '分析失败：' + e.message);
+  }
+
+  isAnalyzing = false;
+  btnCapture.disabled = false;
+  btnCapture.textContent = autoMode ? '[ AUTO ON ]' : '[ 分析画面 ]';
+  pillAi.className = 'pill pill-green';
+  pillAi.innerHTML = '<div class="dot"></div>AI READY';
+}
+
+// ─────────────────────────────────────────
+// AR OVERLAY INJECTION
+// ─────────────────────────────────────────
+function injectOverlays(mode) {
+  const t = Date.now();
+  const W = arCanvas.width, H = arCanvas.height;
+  arOverlays = []; // clear old
+
+  if (mode === 'mahjong') {
+    // Highlight "discard" tile area
+    arOverlays.push({ kind: 'rect', x: 0.54, y: 0.58, w: 0.08, h: 0.14, c: '#ff4444', t });
+    arOverlays.push({ kind: 'crosshair', x: 0.58, y: 0.65, c: '#ff4444', t });
+    arOverlays.push({ kind: 'label', x: 0.54, y: 0.58, text: '打出 ▶', c: '#ff4444', t });
+    // Good tiles
+    arOverlays.push({ kind: 'rect', x: 0.3, y: 0.58, w: 0.16, h: 0.14, c: '#00ff88', t });
+    arOverlays.push({ kind: 'label', x: 0.3, y: 0.58, text: '保留 ✓', c: '#00ff88', t });
+    arOverlays.push({ kind: 'arrow', x1: 0.5, y1: 0.8, x2: 0.58, y2: 0.65, c: '#ff4444', t });
+  } else if (mode === 'chess') {
+    arOverlays.push({ kind: 'crosshair', x: 0.72, y: 0.67, c: '#ffcc00', t });
+    arOverlays.push({ kind: 'label', x: 0.72, y: 0.67, text: '推荐 Q3', c: '#ffcc00', t });
+    arOverlays.push({ kind: 'arrow', x1: 0.5, y1: 0.5, x2: 0.72, y2: 0.67, c: '#ffcc00', t });
+  } else if (mode === 'translate') {
+    arOverlays.push({ kind: 'rect', x: 0.08, y: 0.18, w: 0.84, h: 0.12, c: '#44aaff', t });
+    arOverlays.push({ kind: 'label', x: 0.08, y: 0.18, text: '→ 今日推荐', c: '#44aaff', t });
+    arOverlays.push({ kind: 'rect', x: 0.08, y: 0.34, w: 0.6, h: 0.1, c: '#44aaff', t });
+    arOverlays.push({ kind: 'label', x: 0.08, y: 0.34, text: '→ 时令食材午餐套餐', c: '#44aaff', t });
+  } else if (mode === 'lego') {
+    arOverlays.push({ kind: 'scan', x: 0.1, y: 0.2, w: 0.8, h: 0.6, t });
+    arOverlays.push({ kind: 'crosshair', x: 0.45, y: 0.55, c: '#ff8800', t });
+    arOverlays.push({ kind: 'label', x: 0.45, y: 0.55, text: '下一步 →', c: '#ff8800', t });
+  } else if (mode === 'cards') {
+    arOverlays.push({ kind: 'rect', x: 0.62, y: 0.55, w: 0.1, h: 0.18, c: '#ff4444', t });
+    arOverlays.push({ kind: 'label', x: 0.62, y: 0.55, text: '弃牌', c: '#ff4444', t });
+    arOverlays.push({ kind: 'rect', x: 0.1, y: 0.55, w: 0.42, h: 0.18, c: '#00ff88', t });
+    arOverlays.push({ kind: 'label', x: 0.1, y: 0.55, text: 'A K Q J 保留', c: '#00ff88', t });
+  } else {
+    arOverlays.push({ kind: 'scan', x: 0.05, y: 0.1, w: 0.9, h: 0.8, t });
+  }
+}
+
+// ─────────────────────────────────────────
+// BUBBLE
+// ─────────────────────────────────────────
+function addBubble(type, html) {
+  const typeLabels = {
+    system: 'SYSTEM', thinking: 'PROCESSING',
+    ai: 'AI · ' + (MODES[currentMode]?.label || ''),
+    error: 'ERROR'
+  };
+  const div = document.createElement('div');
+  div.className = 'bubble ' + (type !== 'ai' ? type : '');
+  div.innerHTML = `<div class="bubble-head"><span>${typeLabels[type] || 'AI'}</span><span>${new Date().toLocaleTimeString('ja-JP')}</span></div>${html}`;
+  panel.appendChild(div);
+  // Keep max 6 bubbles
+  while (panel.children.length > 6) panel.removeChild(panel.firstChild);
+  panel.scrollTop = panel.scrollHeight;
+  return div;
+}
+
+// ─────────────────────────────────────────
+// MODE BUTTONS
+// ─────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMode = btn.dataset.mode;
+    modeLabel.textContent = MODES[currentMode].label;
+    arOverlays = [];
+  });
+});
+
+// ─────────────────────────────────────────
+// CONTROLS
+// ─────────────────────────────────────────
+btnCapture.addEventListener('click', analyze);
+
+btnAuto.addEventListener('click', () => {
+  autoMode = !autoMode;
+  btnAuto.style.borderColor = autoMode ? 'rgba(0,255,136,0.6)' : '';
+  btnAuto.style.color = autoMode ? '#00ff88' : '';
+  btnCapture.textContent = autoMode ? '[ AUTO ON ]' : '[ 分析画面 ]';
+
+  if (autoMode) {
+    autoTimer = setInterval(() => { if (!isAnalyzing) analyze(); }, 5000);
+    addBubble('system', '▸ 自动模式已启动（每5秒分析一次）');
+  } else {
+    clearInterval(autoTimer);
+    autoTimer = null;
+    addBubble('system', '▸ 自动模式已关闭');
+  }
+});
+
+$('btn-calib').addEventListener('click', () => {
+  calibOverlay.classList.add('show');
+  addBubble('system', '▸ 校准框已显示 · 3秒后自动关闭');
+  setTimeout(() => calibOverlay.classList.remove('show'), 3000);
+});
+
+$('btn-clear').addEventListener('click', () => {
+  panel.innerHTML = '';
+  arOverlays = [];
+  ctx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); analyze(); }
+  if (e.code === 'KeyC') { $('btn-calib').click(); }
+  if (e.code === 'KeyX') { $('btn-clear').click(); }
+});
+</script>
+</body>
+</html>
